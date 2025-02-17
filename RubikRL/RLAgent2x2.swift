@@ -24,7 +24,7 @@ class RLAgent2x2: ObservableObject {
     }
     
     private func updateEpsilon(episode: Int) {
-        let decayFactor = exp(-self.config.decayRate * Double(episode))
+        let decayFactor = exp(Double(-self.config.decayRate) * Double(episode))
         epsilon = max(self.config.minEpsilon, self.config.initialEpsilon * decayFactor)
     }
     
@@ -33,7 +33,6 @@ class RLAgent2x2: ObservableObject {
     }
     
     func startTraining(environment: CubeManager, completion: @escaping () -> Void) {
-        guard !isTraining else { return }
         isTraining = true
         stopRequested = false
         qQueue.sync { Q.removeAll() }
@@ -43,8 +42,12 @@ class RLAgent2x2: ObservableObject {
         epsilon = config.initialEpsilon
         currentAlpha = config.alpha
         
-        // Set solved state to "1"
-        solved = "1"
+        // Set solved state from environment settings (if provided) or default "1".
+        if let goal = environment.settings.goal {
+            solved = "\(goal)"
+        } else {
+            solved = "1"
+        }
         
         DispatchQueue.global(qos: .userInitiated).async {
             self.trainForever()
@@ -58,29 +61,38 @@ class RLAgent2x2: ObservableObject {
     private func trainForever() {
         var episodeCount = 0
         var recentRewards: [Double] = []
+        let totalStates = config.size * config.size * config.size
+
         while !stopRequested {
             episodeCount += 1
             updateEpsilon(episode: episodeCount)
             updateAlpha(episode: episodeCount)
+            
+            // Randomize initial state for each episode.
+            let initState = String(Int.random(in: 0..<totalStates))
             let reward = runOneEpisode()
             recentRewards.append(reward)
             if recentRewards.count > config.windowSize {
                 recentRewards.removeFirst()
             }
             let avgReward = recentRewards.reduce(0, +) / Double(recentRewards.count)
+            
             DispatchQueue.main.async {
-                self.totalEpisodes = episodeCount
                 self.currentEpisode = episodeCount
+                self.totalEpisodes = episodeCount
                 if reward > self.maxReward {
                     self.maxReward = reward
                 }
                 self.averageReward = avgReward
             }
+            
             if episodeCount % 500 == 0 {
-                print("Episode \(episodeCount): Reward=\(reward), Avg=\(avgReward), MaxReward=\(self.maxReward), Epsilon=\(self.epsilon), Alpha=\(self.currentAlpha)")
+                print("Episode \(episodeCount): Reward = \(reward), Batch Avg = \(avgReward), MaxReward = \(self.maxReward), Epsilon = \(self.epsilon), Alpha = \(self.currentAlpha)")
             }
+            
+            // Stop training if we have a full batch and the average reward meets or exceeds the target.
             if recentRewards.count == config.windowSize && avgReward >= config.targetReward {
-                print("Converged after \(episodeCount) episodes, avg reward: \(avgReward)")
+                print("Convergence achieved after \(episodeCount) episodes with avg reward \(avgReward)")
                 break
             }
         }
