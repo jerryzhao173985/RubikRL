@@ -1,7 +1,7 @@
 import Foundation
 import Combine
 
-class RLAgent2x2: ObservableObject {
+class RLAgentSimple: ObservableObject {
     var Q: [String: [CubeMove: Double]] = [:]
     private let qQueue = DispatchQueue(label: "com.mycompany.RubikRL.QQueue")
     
@@ -10,12 +10,17 @@ class RLAgent2x2: ObservableObject {
     @Published var maxReward: Double = -Double.infinity
     @Published var totalEpisodes: Int = 0
     @Published var averageReward: Double = 0.0
-    var solved: String = "1"  // target: blue corner index must be 1.
-    @Published var isTraining: Bool = false
+    
+    var solved: String = "1"  // Target state.
+    var isTraining: Bool = false
     var stopRequested: Bool = false
     
     var epsilon: Double
-    var currentAlpha: Double  // learning rate that decays
+    var currentAlpha: Double  // Learning rate.
+    
+    // Best model tracking.
+    var bestQ: [String: [CubeMove: Double]] = [:]
+    var bestAvgReward: Double = -Double.infinity
     
     init(config: RLConfig = RLConfig()) {
         self.config = config
@@ -32,8 +37,16 @@ class RLAgent2x2: ObservableObject {
         currentAlpha = max(0.001, config.alpha - 0.00001 * Double(episode))
     }
     
+    func printQStatistics(episode: Int) {
+        qQueue.sync {
+            let stateCount = Q.keys.count
+            let allValues = Q.values.flatMap { $0.values }
+            let avgQ = allValues.reduce(0, +) / Double(allValues.count)
+//            print("Episode \(episode): Q-table has \(stateCount) states, avg Q: \(avgQ)")
+        }
+    }
+    
     func startTraining(environment: CubeManager, completion: @escaping () -> Void) {
-        guard !isTraining else { return }
         isTraining = true
         stopRequested = false
         qQueue.sync { Q.removeAll() }
@@ -42,12 +55,49 @@ class RLAgent2x2: ObservableObject {
         averageReward = 0.0
         epsilon = config.initialEpsilon
         currentAlpha = config.alpha
-        
-        // Set solved state to "1"
         solved = "1"
         
+        // We'll accumulate rewards in a batch array.
+        var batchRewards: [Double] = []
+        
         DispatchQueue.global(qos: .userInitiated).async {
-            self.trainForever()
+            for episode in 1...self.config.maxEpisodes {
+                if self.stopRequested { break }
+                self.updateEpsilon(episode: episode)
+                self.updateAlpha(episode: episode)
+                let initState = String(Int.random(in: 0..<8))
+                let reward = self.runOneEpisode(from: initState)
+                
+                // Update episode counters on main thread.
+                DispatchQueue.main.async {
+                    self.currentEpisode = episode
+                    self.totalEpisodes = episode
+                    if reward > self.maxReward {
+                        self.maxReward = reward
+                    }
+                }
+                
+                // Append this episode's reward to the batch.
+                batchRewards.append(reward)
+                
+                // Every windowSize episodes, compute and log batch stats.
+                if episode % self.config.windowSize == 0 {
+                    let avgBatchReward = batchRewards.reduce(0, +) / Double(batchRewards.count)
+                    let maxBatchReward = batchRewards.max() ?? 0.0
+                    if episode % self.config.debugInterval == 0 {
+                        print("Batch ending at episode \(episode): avg reward: \(avgBatchReward), max reward: \(maxBatchReward)")
+                    }
+                    self.printQStatistics(episode: episode)
+                    
+                    // Check convergence: if the average reward over the batch is above targetReward, stop training.
+                    if avgBatchReward >= self.config.targetReward {
+                        print("Convergence achieved at episode \(episode) with avg reward \(avgBatchReward)")
+                        break
+                    }
+                    // Reset batchRewards for next batch.
+                    batchRewards.removeAll()
+                }
+            }
             DispatchQueue.main.async {
                 self.isTraining = false
                 completion()
@@ -55,39 +105,8 @@ class RLAgent2x2: ObservableObject {
         }
     }
     
-    private func trainForever() {
-        var episodeCount = 0
-        var recentRewards: [Double] = []
-        while !stopRequested {
-            episodeCount += 1
-            updateEpsilon(episode: episodeCount)
-            updateAlpha(episode: episodeCount)
-            let reward = runOneEpisode()
-            recentRewards.append(reward)
-            if recentRewards.count > config.windowSize {
-                recentRewards.removeFirst()
-            }
-            let avgReward = recentRewards.reduce(0, +) / Double(recentRewards.count)
-            DispatchQueue.main.async {
-                self.totalEpisodes = episodeCount
-                self.currentEpisode = episodeCount
-                if reward > self.maxReward {
-                    self.maxReward = reward
-                }
-                self.averageReward = avgReward
-            }
-            if episodeCount % 500 == 0 {
-                print("Episode \(episodeCount): Reward=\(reward), Avg=\(avgReward), MaxReward=\(self.maxReward), Epsilon=\(self.epsilon), Alpha=\(self.currentAlpha)")
-            }
-            if recentRewards.count == config.windowSize && avgReward >= config.targetReward {
-                print("Converged after \(episodeCount) episodes, avg reward: \(avgReward)")
-                break
-            }
-        }
-    }
-    
-    private func runOneEpisode() -> Double {
-        var state = randomState()
+    private func runOneEpisode(from initState: String) -> Double {
+        var state = initState
         var steps = 0
         var episodeReward = 0.0
         while state != solved && steps < config.maxSteps && !stopRequested {
@@ -106,11 +125,6 @@ class RLAgent2x2: ObservableObject {
         return episodeReward
     }
     
-    private func randomState() -> String {
-        let rand = Int.random(in: 0..<8)
-        return "\(rand)"
-    }
-    
     private func chooseActionForTraining(state: String) -> CubeMove {
         qQueue.sync {
             if Q[state] == nil {
@@ -121,17 +135,17 @@ class RLAgent2x2: ObservableObject {
             }
         }
         if Double.random(in: 0...1) < epsilon {
-            return CubeMove.availableMoves2x2.randomElement()!
+            // Now choose from all 12 moves.
+            return CubeMove.allCases.randomElement()!
         } else {
             var qState: [CubeMove: Double] = [:]
             qQueue.sync {
                 qState = Q[state] ?? [:]
             }
-            return qState.max { a, b in a.value < b.value }!.key
+            return qState.max { a, b in a.value < b.value }?.key ?? CubeMove.allCases.randomElement()!
         }
     }
     
-    /// Given the current state (a single digit as string) and a move, simulate the new state.
     private func simulateState(state: String, move: CubeMove) -> String {
         guard let index = Int(state) else { return state }
         let perm = move.cornerPermutation
@@ -163,7 +177,7 @@ class RLAgent2x2: ObservableObject {
                 actions = Q[currentState] ?? [:]
             }
             if actions.isEmpty {
-                print("No Q–value for state: \(currentState)")
+                print("No Q-value for state: \(currentState)")
                 break
             }
             guard let bestMove = actions.max(by: { a, b in a.value < b.value })?.key else { break }

@@ -1,13 +1,13 @@
 import SceneKit
 
 class Cubie {
-    let id: Int          // The solved corner ID (0...7).
+    let id: Int       // Canonical corner index.
     let node: SCNNode
-    var orientation: Int // 0, 1, or 2.
+    var isBlue: Bool  // true if this cubie is blue.
     
-    init(id: Int, node: SCNNode, orientation: Int = 0) {
+    init(id: Int, node: SCNNode, isBlue: Bool = false) {
         self.id = id
         self.node = node
-        self.orientation = orientation
+        self.isBlue = isBlue
     }
 }

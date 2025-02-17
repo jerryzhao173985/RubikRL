@@ -3,7 +3,7 @@ import SceneKit
 
 struct RubiksCubeFullView: UIViewRepresentable {
     let cubeManager: CubeManager
-
+    
     func makeUIView(context: Context) -> SCNView {
         let scnView = SCNView(frame: .zero)
         scnView.scene = cubeManager.scene
@@ -13,6 +13,6 @@ struct RubiksCubeFullView: UIViewRepresentable {
         scnView.antialiasingMode = .multisampling4X
         return scnView
     }
-
+    
     func updateUIView(_ uiView: SCNView, context: Context) { }
 }

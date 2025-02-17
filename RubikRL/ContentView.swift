@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var cubeManager = CubeManager()
-    @StateObject private var rlAgent = RLAgent2x2()
+    @StateObject private var rlAgent = RLAgentSimple()
     
     var body: some View {
         VStack {
@@ -40,11 +40,10 @@ struct ContentView: View {
                     }
                     .disabled(rlAgent.isTraining)
                     Button(action: {
-                        let currentState = cubeManager.getCornerState()
-                        print("Current corner state: \(currentState)")
+                        let currentState = cubeManager.getBlueCornerState()
+                        print("Current blue corner state: \(currentState)")
                         let solution = rlAgent.getSolution(from: currentState, maxDepth: 50)
                         print("RL solution: \(solution.map { $0.rawValue })")
-                        rlAgent.printQStatistics()
                         cubeManager.animateSolution(moves: solution)
                     }) {
                         Text("Run")
@@ -55,10 +54,6 @@ struct ContentView: View {
                             .cornerRadius(12)
                     }
                 }
-            }
-            .onAppear {
-                // Optionally update debug labels after each move.
-                cubeManager.updateDebugLabels()
             }
             .padding()
             .background(Color.black)

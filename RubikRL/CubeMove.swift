@@ -3,10 +3,12 @@ import SceneKit
 enum CubeMove: String, CaseIterable {
     case U, UPrime, D, DPrime, L, LPrime, R, RPrime, F, FPrime, B, BPrime
 
+    // For RL we use all 12 moves.
     static var availableMoves2x2: [CubeMove] {
-        return [.U, .D, .L, .R, .F, .B]
+        return CubeMove.allCases
     }
     
+    // For visualization.
     var axis: SCNVector3 {
         switch self {
         case .U, .UPrime, .D, .DPrime:
@@ -27,126 +29,64 @@ enum CubeMove: String, CaseIterable {
         }
     }
     
-    var affectedLayer: (axis: String, value: Double) {
-        switch self {
-        case .U, .UPrime:
-            return ("y", 0.5)
-        case .D, .DPrime:
-            return ("y", -0.5)
-        case .L, .LPrime:
-            return ("x", -0.5)
-        case .R, .RPrime:
-            return ("x", 0.5)
-        case .F, .FPrime:
-            return ("z", 0.5)
-        case .B, .BPrime:
-            return ("z", -0.5)
-        }
-    }
-    
-    func rotateCoordinate(_ coord: (x: Double, y: Double, z: Double)) -> (x: Double, y: Double, z: Double) {
-        switch self {
-        case .U:      return (x: coord.z, y: coord.y, z: -coord.x)
-        case .UPrime: return (x: -coord.z, y: coord.y, z: coord.x)
-        case .D:      return (x: -coord.z, y: coord.y, z: coord.x)
-        case .DPrime: return (x: coord.z, y: coord.y, z: -coord.x)
-        case .L:      return (x: coord.x, y: coord.z, z: -coord.y)
-        case .LPrime: return (x: coord.x, y: -coord.z, z: coord.y)
-        case .R:      return (x: coord.x, y: -coord.z, z: coord.y)
-        case .RPrime: return (x: coord.x, y: coord.z, z: -coord.y)
-        case .F:      return (x: coord.y, y: -coord.x, z: coord.z)
-        case .FPrime: return (x: -coord.y, y: coord.x, z: coord.z)
-        case .B:      return (x: -coord.y, y: coord.x, z: coord.z)
-        case .BPrime: return (x: coord.y, y: -coord.x, z: coord.z)
-        }
-    }
-    
-    var quaternion: SCNQuaternion {
-        let halfAngle = angle / 2
-        let sinHalf = sin(halfAngle)
-        let cosHalf = cos(halfAngle)
-        let a = axis
-        return SCNQuaternion(a.x * Float(sinHalf), a.y * Float(sinHalf), a.z * Float(sinHalf), Float(cosHalf))
-    }
-    
-    // Add the inverse computed property.
-    var inverse: CubeMove {
-        switch self {
-        case .U: return .UPrime
-        case .UPrime: return .U
-        case .D: return .DPrime
-        case .DPrime: return .D
-        case .L: return .LPrime
-        case .LPrime: return .L
-        case .R: return .RPrime
-        case .RPrime: return .R
-        case .F: return .FPrime
-        case .FPrime: return .F
-        case .B: return .BPrime
-        case .BPrime: return .B
-        }
-    }
-    
-    /// Permutation mapping on the 8 corners (indices 0...7).
+    /// Permutation mapping on indices 0...7.
+    /// (These are example mappings; you may adjust them to better reflect Rubik’s cube moves.)
     var cornerPermutation: [Int] {
         switch self {
         case .U:
+            // Cycle top corners: positions 0,1,4,5.
             var perm = Array(0..<8)
             perm[0] = 1; perm[1] = 5; perm[5] = 4; perm[4] = 0
             return perm
+        case .UPrime:
+            var perm = Array(0..<8)
+            perm[0] = 4; perm[4] = 5; perm[5] = 1; perm[1] = 0
+            return perm
         case .D:
+            // Cycle bottom corners: positions 2,3,6,7.
             var perm = Array(0..<8)
             perm[2] = 3; perm[3] = 7; perm[7] = 6; perm[6] = 2
             return perm
+        case .DPrime:
+            var perm = Array(0..<8)
+            perm[2] = 6; perm[6] = 7; perm[7] = 3; perm[3] = 2
+            return perm
         case .L:
+            // Cycle left face: positions 0,2,4,6.
             var perm = Array(0..<8)
             perm[0] = 2; perm[2] = 6; perm[6] = 4; perm[4] = 0
             return perm
+        case .LPrime:
+            var perm = Array(0..<8)
+            perm[0] = 4; perm[4] = 6; perm[6] = 2; perm[2] = 0
+            return perm
         case .R:
+            // Cycle right face: positions 1,3,5,7.
             var perm = Array(0..<8)
             perm[1] = 3; perm[3] = 7; perm[7] = 5; perm[5] = 1
             return perm
+        case .RPrime:
+            var perm = Array(0..<8)
+            perm[1] = 5; perm[5] = 7; perm[7] = 3; perm[3] = 1
+            return perm
         case .F:
+            // Cycle front face: positions 0,1,2,3.
             var perm = Array(0..<8)
             perm[0] = 1; perm[1] = 3; perm[3] = 2; perm[2] = 0
             return perm
+        case .FPrime:
+            var perm = Array(0..<8)
+            perm[0] = 2; perm[2] = 3; perm[3] = 1; perm[1] = 0
+            return perm
         case .B:
+            // Cycle back face: positions 4,5,6,7.
             var perm = Array(0..<8)
             perm[4] = 5; perm[5] = 7; perm[7] = 6; perm[6] = 4
             return perm
-        default:
-            return self.inverse.cornerPermutation
-        }
-    }
-    
-    /// For corner orientation delta we return an array of 8 ints (only affected corners will have nonzero values).
-    /// For simplicity, let’s assume U and D do not change orientation.
-    var cornerOrientationDelta: [Int] {
-        switch self {
-        case .U, .D:
-            return Array(repeating: 0, count: 8)
-        case .F:
-            var delta = Array(repeating: 0, count: 8)
-            // For F move, affect corners 0,1,2,3.
-            delta[0] = 1; delta[1] = 2; delta[2] = 2; delta[3] = 1
-            return delta
-        case .B:
-            var delta = Array(repeating: 0, count: 8)
-            // For B move, affect corners 4,5,6,7.
-            delta[4] = 1; delta[5] = 2; delta[6] = 2; delta[7] = 1
-            return delta
-        case .L:
-            var delta = Array(repeating: 0, count: 8)
-            // Affect corners 0,2,4,6.
-            delta[0] = 1; delta[2] = 2; delta[4] = 2; delta[6] = 1
-            return delta
-        case .R:
-            var delta = Array(repeating: 0, count: 8)
-            // Affect corners 1,3,5,7.
-            delta[1] = 1; delta[3] = 2; delta[5] = 2; delta[7] = 1
-            return delta
-        default:
-            return self.inverse.cornerOrientationDelta
+        case .BPrime:
+            var perm = Array(0..<8)
+            perm[4] = 6; perm[6] = 7; perm[7] = 5; perm[5] = 4
+            return perm
         }
     }
 }

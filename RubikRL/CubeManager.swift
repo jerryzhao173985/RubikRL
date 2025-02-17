@@ -5,8 +5,17 @@ class CubeManager: ObservableObject {
     let scene: SCNScene
     let cubeContainer: SCNNode
     var cubies: [Cubie] = []
-    // For visualization, we still place them according to their positions.
-    let positions: [Double] = [-0.5, 0.5]
+    // Canonical positions (fixed).
+    let positions: [(x: Double, y: Double, z: Double)] = [
+        (-0.5, 0.5, 0.5),   // 0: front-top-left
+        (0.5, 0.5, 0.5),    // 1: front-top-right
+        (-0.5, -0.5, 0.5),  // 2: front-bottom-left
+        (0.5, -0.5, 0.5),   // 3: front-bottom-right
+        (-0.5, 0.5, -0.5),  // 4: back-top-left
+        (0.5, 0.5, -0.5),   // 5: back-top-right
+        (-0.5, -0.5, -0.5), // 6: back-bottom-left
+        (0.5, -0.5, -0.5)   // 7: back-bottom-right
+    ]
     var moveHistory: [CubeMove] = []
     var isAnimating = false
     
@@ -43,102 +52,81 @@ class CubeManager: ObservableObject {
     }
     
     private func buildCube() {
-        // Canonical ordering:
-        // 0: front-top-left, 1: front-top-right, 2: front-bottom-left, 3: front-bottom-right,
-        // 4: back-top-left, 5: back-top-right, 6: back-bottom-left, 7: back-bottom-right.
-        let positionsOrdered: [(x: Double, y: Double, z: Double)] = [
-            (-0.5, 0.5, 0.5),  // 0
-            (0.5, 0.5, 0.5),   // 1
-            (-0.5, -0.5, 0.5), // 2
-            (0.5, -0.5, 0.5),  // 3
-            (-0.5, 0.5, -0.5), // 4
-            (0.5, 0.5, -0.5),  // 5
-            (-0.5, -0.5, -0.5),// 6
-            (0.5, -0.5, -0.5)  // 7
-        ]
-        
-        for i in 0..<positionsOrdered.count {
-            let pos = positionsOrdered[i]
+        // Build cubies at fixed positions.
+        // Randomly choose one cubie to be blue.
+        let blueIndex = Int.random(in: 0..<8)
+        for i in 0..<positions.count {
+            let pos = positions[i]
             let box = SCNBox(width: 1, height: 1, length: 1, chamferRadius: 0.01)
             let redMat = SCNMaterial(); redMat.diffuse.contents = UIColor.red
             let blueMat = SCNMaterial(); blueMat.diffuse.contents = UIColor.blue
-            box.materials = [redMat, blueMat, redMat, blueMat, redMat, blueMat]
-            
+            box.materials = [redMat, redMat, redMat, redMat, redMat, redMat]
             let node = SCNNode(geometry: box)
             node.position = SCNVector3(Float(pos.x), Float(pos.y), Float(pos.z))
             cubeContainer.addChildNode(node)
-            let cubie = Cubie(id: i, node: node, orientation: 0)
+            let isBlue = (i == blueIndex)
+            if isBlue {
+                box.materials = [blueMat, blueMat, blueMat, blueMat, blueMat, blueMat]
+            }
+            let cubie = Cubie(id: i, node: node, isBlue: isBlue)
             cubies.append(cubie)
         }
     }
     
-    /// Returns a compact 16-character state string representing the corners.
-    /// For each cubie (sorted by solved id 0...7), we encode as two digits: first digit = id, second digit = orientation.
-    func getCornerState() -> String {
-        let sortedCubies = cubies.sorted { $0.id < $1.id }
-        var state = ""
-        for cubie in sortedCubies {
-            state += "\(cubie.id)\(cubie.orientation)"
+    /// Returns the RL state as a string representing the blue cubie's index.
+    func getBlueCornerState() -> String {
+        if let blueCubie = cubies.first(where: { $0.isBlue }) {
+            return "\(blueCubie.id)"
         }
-        return state
+        return "?"
     }
     
+    /// Given an RL move, update the RL state (which is the index of the blue cubie) and update the colors.
     func performMove(_ move: CubeMove, record: Bool = true, completion: (() -> Void)? = nil) {
-        guard !isAnimating else { return }
-        isAnimating = true
-        DispatchQueue.main.async { self.activeMove = move }
+        // Do not animate the entire cube container.
+        // Instead, update the RL state using the move's permutation mapping.
+        let currentState = getBlueCornerState()  // e.g. "3"
+        guard let index = Int(currentState) else { return }
+        let perm = move.cornerPermutation
+        let newIndex = perm[index]
+        let newState = "\(newIndex)"
         
-        // For visualization we use physical positions (not used for RL state).
-        let layer = move.affectedLayer
-        let affectedCubies = cubies.filter { cubie in
-            switch layer.axis {
-            case "x": return cubie.node.position.x == Float(layer.value)
-            case "y": return cubie.node.position.y == Float(layer.value)
-            case "z": return cubie.node.position.z == Float(layer.value)
-            default: return false
-            }
+        // Now update the color assignment: set the cubie with canonical id equal to newState as blue,
+        // and all others red. (The physical positions remain unchanged.)
+        updateColors(for: newState)
+        
+        if record {
+            moveHistory.append(move)
         }
         
-        let groupNode = SCNNode()
-        cubeContainer.addChildNode(groupNode)
-        for cubie in affectedCubies {
-            cubie.node.removeFromParentNode()
-            groupNode.addChildNode(cubie.node)
-        }
-        
-        let rotationAction = SCNAction.rotate(by: CGFloat(move.angle), around: move.axis, duration: 0.3)
-        groupNode.runAction(rotationAction) { [weak self] in
-            guard let self = self else { return }
-            // In a complete implementation, physical positions and orientations are updated.
-            // For RL, we update the cubies' orientation values.
-            for cubie in affectedCubies {
-                let delta = move.cornerOrientationDelta[cubie.id]
-                cubie.orientation = (cubie.orientation + delta) % 3
+        // Call the completion handler.
+        completion?()
+    }
+    
+    /// Update the color assignment: set cubie with given index as blue, others red.
+    func updateColors(for state: String) {
+        guard let blueIndex = Int(state) else { return }
+        for cubie in cubies {
+            let box = cubie.node.geometry as? SCNBox
+            if cubie.id == blueIndex {
+                let blueMat = SCNMaterial()
+                blueMat.diffuse.contents = UIColor.blue
+                box?.materials = [blueMat, blueMat, blueMat, blueMat, blueMat, blueMat]
+                cubie.isBlue = true
+            } else {
+                let redMat = SCNMaterial()
+                redMat.diffuse.contents = UIColor.red
+                box?.materials = [redMat, redMat, redMat, redMat, redMat, redMat]
+                cubie.isBlue = false
             }
-            groupNode.removeFromParentNode()
-            if record { self.moveHistory.append(move) }
-            self.isAnimating = false
-            DispatchQueue.main.async { self.activeMove = nil }
-            completion?()
         }
     }
     
     func randomizeCube() {
         guard !isAnimating else { return }
-        let moves = CubeMove.availableMoves2x2
-        let count = 10
-        var current = 0
-        func performNext() {
-            if current >= count { return }
-            let move = moves.randomElement()!
-            performMove(move) {
-                current += 1
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    performNext()
-                }
-            }
-        }
-        performNext()
+        // Instead of performing a move on cubies, we simply choose a random state and update colors.
+        let randomIndex = Int.random(in: 0..<8)
+        updateColors(for: "\(randomIndex)")
     }
     
     func animateSolution(moves: [CubeMove]) {
@@ -149,23 +137,6 @@ class CubeManager: ObservableObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 self.animateSolution(moves: remaining)
             }
-        }
-    }
-    
-    // For debugging: add labels to each cubie showing its state.
-    func updateDebugLabels() {
-        for cubie in cubies {
-            // Remove existing text nodes.
-            cubie.node.childNodes.filter { $0.name == "debugLabel" }.forEach { $0.removeFromParentNode() }
-            let textGeometry = SCNText(string: "\(cubie.id),\(cubie.orientation)", extrusionDepth: 0.1)
-            textGeometry.firstMaterial?.diffuse.contents = UIColor.white
-            textGeometry.font = UIFont.systemFont(ofSize: 0.2)
-            let textNode = SCNNode(geometry: textGeometry)
-            textNode.name = "debugLabel"
-            // Scale and position text so it sits on the cubie.
-            textNode.scale = SCNVector3(0.2, 0.2, 0.2)
-            textNode.position = SCNVector3(0, 0.6, 0)  // adjust as needed.
-            cubie.node.addChildNode(textNode)
         }
     }
 }
