@@ -3,14 +3,15 @@ import SwiftUI
 
 class CubeManager: ObservableObject {
     let scene: SCNScene
-    let cubeContainer: SCNNode  // Container node for the cube.
+    let cubeContainer: SCNNode
     var cubies: [Cubie] = []
+    // For visualization, we still place them according to their positions.
     let positions: [Double] = [-0.5, 0.5]
     var moveHistory: [CubeMove] = []
     var isAnimating = false
-
+    
     @Published var activeMove: CubeMove? = nil
-
+    
     init() {
         scene = SCNScene()
         cubeContainer = SCNNode()
@@ -18,7 +19,7 @@ class CubeManager: ObservableObject {
         setupCameraAndLights()
         buildCube()
     }
-
+    
     private func setupCameraAndLights() {
         let cameraNode = SCNNode()
         cameraNode.camera = SCNCamera()
@@ -27,61 +28,73 @@ class CubeManager: ObservableObject {
         constraint.isGimbalLockEnabled = true
         cameraNode.constraints = [constraint]
         scene.rootNode.addChildNode(cameraNode)
-
+        
         let omniLight = SCNNode()
         omniLight.light = SCNLight()
         omniLight.light?.type = .omni
         omniLight.position = SCNVector3(3, 3, 3)
         scene.rootNode.addChildNode(omniLight)
-
+        
         let ambientLight = SCNNode()
         ambientLight.light = SCNLight()
         ambientLight.light?.type = .ambient
         ambientLight.light?.color = UIColor.darkGray
         scene.rootNode.addChildNode(ambientLight)
     }
-
+    
     private func buildCube() {
-        var cubieId = 0
-        for x in positions {
-            for y in positions {
-                for z in positions {
-                    let box = SCNBox(width: 1, height: 1, length: 1, chamferRadius: 0.01)
-                    // Two colors: red for front, back, top; blue for right, left, bottom.
-                    let redMat = SCNMaterial(); redMat.diffuse.contents = UIColor.red
-                    let blueMat = SCNMaterial(); blueMat.diffuse.contents = UIColor.blue
-                    box.materials = [redMat, blueMat, redMat, blueMat, redMat, blueMat]
-                    
-                    let cubieNode = SCNNode(geometry: box)
-                    cubieNode.position = SCNVector3(Float(x), Float(y), Float(z))
-                    cubeContainer.addChildNode(cubieNode)
-                    let cubie = Cubie(id: cubieId, node: cubieNode, position: (x, y, z))
-                    cubies.append(cubie)
-                    cubieId += 1
-                }
-            }
+        // Canonical ordering:
+        // 0: front-top-left, 1: front-top-right, 2: front-bottom-left, 3: front-bottom-right,
+        // 4: back-top-left, 5: back-top-right, 6: back-bottom-left, 7: back-bottom-right.
+        let positionsOrdered: [(x: Double, y: Double, z: Double)] = [
+            (-0.5, 0.5, 0.5),  // 0
+            (0.5, 0.5, 0.5),   // 1
+            (-0.5, -0.5, 0.5), // 2
+            (0.5, -0.5, 0.5),  // 3
+            (-0.5, 0.5, -0.5), // 4
+            (0.5, 0.5, -0.5),  // 5
+            (-0.5, -0.5, -0.5),// 6
+            (0.5, -0.5, -0.5)  // 7
+        ]
+        
+        for i in 0..<positionsOrdered.count {
+            let pos = positionsOrdered[i]
+            let box = SCNBox(width: 1, height: 1, length: 1, chamferRadius: 0.01)
+            let redMat = SCNMaterial(); redMat.diffuse.contents = UIColor.red
+            let blueMat = SCNMaterial(); blueMat.diffuse.contents = UIColor.blue
+            box.materials = [redMat, blueMat, redMat, blueMat, redMat, blueMat]
+            
+            let node = SCNNode(geometry: box)
+            node.position = SCNVector3(Float(pos.x), Float(pos.y), Float(pos.z))
+            cubeContainer.addChildNode(node)
+            let cubie = Cubie(id: i, node: node, orientation: 0)
+            cubies.append(cubie)
         }
     }
-
-    private func updateCubieTransform(_ cubie: Cubie) {
-        let newPos = SCNVector3(Float(cubie.logicalPosition.x),
-                                Float(cubie.logicalPosition.y),
-                                Float(cubie.logicalPosition.z))
-        cubie.node.position = newPos
-        cubie.node.orientation = cubie.netRotation
+    
+    /// Returns a compact 16-character state string representing the corners.
+    /// For each cubie (sorted by solved id 0...7), we encode as two digits: first digit = id, second digit = orientation.
+    func getCornerState() -> String {
+        let sortedCubies = cubies.sorted { $0.id < $1.id }
+        var state = ""
+        for cubie in sortedCubies {
+            state += "\(cubie.id)\(cubie.orientation)"
+        }
+        return state
     }
-
+    
     func performMove(_ move: CubeMove, record: Bool = true, completion: (() -> Void)? = nil) {
         guard !isAnimating else { return }
         isAnimating = true
         DispatchQueue.main.async { self.activeMove = move }
         
+        // For visualization we use physical positions (not used for RL state).
         let layer = move.affectedLayer
         let affectedCubies = cubies.filter { cubie in
             switch layer.axis {
-            case "x": return cubie.logicalPosition.x == layer.value
-            case "y": return cubie.logicalPosition.y == layer.value
-            case "z": return cubie.logicalPosition.z == layer.value
+            case "x": return cubie.node.position.x == Float(layer.value)
+            case "y": return cubie.node.position.y == Float(layer.value)
+            case "z": return cubie.node.position.z == Float(layer.value)
             default: return false
             }
         }
@@ -96,16 +109,11 @@ class CubeManager: ObservableObject {
         let rotationAction = SCNAction.rotate(by: CGFloat(move.angle), around: move.axis, duration: 0.3)
         groupNode.runAction(rotationAction) { [weak self] in
             guard let self = self else { return }
+            // In a complete implementation, physical positions and orientations are updated.
+            // For RL, we update the cubies' orientation values.
             for cubie in affectedCubies {
-                cubie.logicalPosition = move.rotateCoordinate(cubie.logicalPosition)
-                let oldQuat = cubie.netRotation
-                let moveQuat = move.quaternion
-                cubie.netRotation = self.multiplyQuaternion(q1: moveQuat, q2: oldQuat)
-                
-                let worldT = cubie.node.worldTransform
-                cubie.node.transform = self.cubeContainer.convertTransform(worldT, from: nil)
-                self.cubeContainer.addChildNode(cubie.node)
-                self.updateCubieTransform(cubie)
+                let delta = move.cornerOrientationDelta[cubie.id]
+                cubie.orientation = (cubie.orientation + delta) % 3
             }
             groupNode.removeFromParentNode()
             if record { self.moveHistory.append(move) }
@@ -113,16 +121,6 @@ class CubeManager: ObservableObject {
             DispatchQueue.main.async { self.activeMove = nil }
             completion?()
         }
-    }
-
-    private func multiplyQuaternion(q1: SCNQuaternion, q2: SCNQuaternion) -> SCNQuaternion {
-        let w1 = q1.w, x1 = q1.x, y1 = q1.y, z1 = q1.z
-        let w2 = q2.w, x2 = q2.x, y2 = q2.y, z2 = q2.z
-        let w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
-        let x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
-        let y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
-        let z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
-        return SCNQuaternion(x, y, z, w)
     }
     
     func randomizeCube() {
@@ -142,8 +140,7 @@ class CubeManager: ObservableObject {
         }
         performNext()
     }
-
-    // Fallback function: animate the sequence of moves.
+    
     func animateSolution(moves: [CubeMove]) {
         guard !moves.isEmpty else { return }
         let first = moves.first!
@@ -154,14 +151,21 @@ class CubeManager: ObservableObject {
             }
         }
     }
-
-    /// In our reduced corner representation, we simply represent the state by the y-coordinate.
-    /// For example, if a cubie’s y > 0, output "0" (top) else "1" (bottom).
-    func getCornerState() -> String {
-        let sortedCubies = cubies.sorted { $0.id < $1.id }
-        let state = sortedCubies.map { cubie -> String in
-            return (cubie.logicalPosition.y > 0) ? "0" : "1"
+    
+    // For debugging: add labels to each cubie showing its state.
+    func updateDebugLabels() {
+        for cubie in cubies {
+            // Remove existing text nodes.
+            cubie.node.childNodes.filter { $0.name == "debugLabel" }.forEach { $0.removeFromParentNode() }
+            let textGeometry = SCNText(string: "\(cubie.id),\(cubie.orientation)", extrusionDepth: 0.1)
+            textGeometry.firstMaterial?.diffuse.contents = UIColor.white
+            textGeometry.font = UIFont.systemFont(ofSize: 0.2)
+            let textNode = SCNNode(geometry: textGeometry)
+            textNode.name = "debugLabel"
+            // Scale and position text so it sits on the cubie.
+            textNode.scale = SCNVector3(0.2, 0.2, 0.2)
+            textNode.position = SCNVector3(0, 0.6, 0)  // adjust as needed.
+            cubie.node.addChildNode(textNode)
         }
-        return state.joined()
     }
 }

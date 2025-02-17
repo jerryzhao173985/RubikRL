@@ -1,17 +1,13 @@
 import SceneKit
 
 class Cubie {
-    let id: Int          // Unique ID assigned during construction.
+    let id: Int          // The solved corner ID (0...7).
     let node: SCNNode
-    var logicalPosition: (x: Double, y: Double, z: Double)
-    let solvedPosition: (x: Double, y: Double, z: Double)
-    var netRotation: SCNQuaternion
+    var orientation: Int // 0, 1, or 2.
     
-    init(id: Int, node: SCNNode, position: (x: Double, y: Double, z: Double)) {
+    init(id: Int, node: SCNNode, orientation: Int = 0) {
         self.id = id
         self.node = node
-        self.logicalPosition = position
-        self.solvedPosition = position
-        self.netRotation = SCNQuaternion(0, 0, 0, 1)
+        self.orientation = orientation
     }
 }

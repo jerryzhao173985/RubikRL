@@ -11,25 +11,47 @@ class RLAgent2x2: ObservableObject {
     @Published var totalEpisodes: Int = 0
     @Published var averageReward: Double = 0.0
     var solved: String = ""
+    var solvedSet: Set<String> = []
     @Published var isTraining: Bool = false
     var stopRequested: Bool = false
     
     var epsilon: Double
+    var currentAlpha: Double
     
     init(config: RLConfig = RLConfig()) {
         self.config = config
         self.epsilon = config.initialEpsilon
-    }
-    
-    // A simple helper that checks if the state equals the canonical solved state.
-    // (If you wish to allow global rotations as solved, you can compute all equivalent states.)
-    private func isSolved(_ state: String) -> Bool {
-        return state == solved
+        self.currentAlpha = config.alpha
     }
     
     private func updateEpsilon(episode: Int) {
         let decayFactor = exp(-self.config.decayRate * Double(episode))
         epsilon = max(self.config.minEpsilon, self.config.initialEpsilon * decayFactor)
+    }
+    
+    private func updateAlpha(episode: Int) {
+        currentAlpha = max(0.001, config.alpha - 0.00001 * Double(episode))
+    }
+    
+    /// Generate all equivalent solved states by applying the 24 global rotations.
+    private func generateSolvedSet(from canonical: String) -> Set<String> {
+        // canonical is a 16-character string (2 digits per corner).
+        var set = Set<String>()
+        for perm in globalCornerRotations {
+            var newState = ""
+            let arr = Array(canonical)
+            for i in 0..<8 {
+                let srcIndex = 2 * perm[i]
+                newState.append(arr[srcIndex])
+                newState.append(arr[srcIndex + 1])
+            }
+            set.insert(newState)
+        }
+        return set
+    }
+    
+    private func isSolved(_ state: String) -> Bool {
+        return solvedSet.contains(state)
     }
     
     func startTraining(environment: CubeManager, completion: @escaping () -> Void) {
@@ -41,14 +63,17 @@ class RLAgent2x2: ObservableObject {
         maxReward = -Double.infinity
         averageReward = 0.0
         epsilon = config.initialEpsilon
+        currentAlpha = config.alpha
         
-        // Define solved state consistently:
-        // Here we set solved to the initial corner state.
-        let solvedState = environment.getCornerState()  // For example, "00001111"
-        solved = solvedState
+        let solvedState = environment.getCornerState()  // e.g. "0,0;1,0;2,0;...;7,0"
+        // Convert canonical state to our compact representation.
+        // We'll assume it becomes a 16-character string by removing separators.
+        let canonical = solvedState.replacingOccurrences(of: ";", with: "")
+        solved = canonical
+        solvedSet = generateSolvedSet(from: canonical)
         
         DispatchQueue.global(qos: .userInitiated).async {
-            self.trainForever(solvedState: solvedState)
+            self.trainForever(solvedState: canonical)
             DispatchQueue.main.async {
                 self.isTraining = false
                 completion()
@@ -63,6 +88,7 @@ class RLAgent2x2: ObservableObject {
         while !stopRequested {
             episodeCount += 1
             updateEpsilon(episode: episodeCount)
+            updateAlpha(episode: episodeCount)
             let reward = runOneEpisode(from: solvedState)
             recentRewards.append(reward)
             if recentRewards.count > config.windowSize {
@@ -79,8 +105,8 @@ class RLAgent2x2: ObservableObject {
                 self.averageReward = avgReward
             }
             
-            if episodeCount % 500 == 0 {
-                print("Episode \(episodeCount): Reward=\(reward), Avg=\(avgReward), MaxReward=\(self.maxReward), Epsilon=\(self.epsilon)")
+            if episodeCount % 10000 == 0 {
+                print("Episode \(episodeCount): Reward=\(reward), Avg=\(avgReward), MaxReward=\(self.maxReward), Epsilon=\(self.epsilon), Alpha=\(self.currentAlpha)")
             }
             
             if recentRewards.count == config.windowSize && avgReward >= config.targetReward {
@@ -94,17 +120,16 @@ class RLAgent2x2: ObservableObject {
         var state = randomState(from: solvedState, moves: 10)
         var steps = 0
         var episodeReward: Double = 0
+        let gamma = config.gamma
         
         while !isSolved(state) && steps < config.maxSteps && !stopRequested {
             let currentPotential = Double(numCorrectCorners(state: state))
             let action = chooseActionForTraining(state: state)
-            let nextState = simulateCorner(state: state, move: action)
+            let nextState = simulateDetailed(state: state, move: action)
             let nextPotential = Double(numCorrectCorners(state: nextState))
             let r = -1.0
-            // Shaped reward: add potential difference.
-            let shapedReward = r + config.gamma * nextPotential - currentPotential
+            let shapedReward = r + gamma * nextPotential - currentPotential
             let reward: Double = isSolved(nextState) ? (shapedReward + (100 - Double(steps + 1))) : shapedReward
-            
             updateQ(state: state, action: action, reward: reward, nextState: nextState)
             episodeReward += reward
             state = nextState
@@ -118,14 +143,13 @@ class RLAgent2x2: ObservableObject {
     }
     
     private func numCorrectCorners(state: String) -> Int {
-        // In our simple representation, state is 8 characters.
-        // Compare each character to the corresponding character in 'solved'.
+        // State is 16 characters: for each corner, first digit is id, second digit is twist.
+        // Compare twist with canonical solved twist (which is 0).
         guard state.count == solved.count else { return 0 }
-        let sArr = Array(state)
-        let solArr = Array(solved)
+        let arr = Array(state)
         var count = 0
-        for i in 0..<sArr.count {
-            if sArr[i] == solArr[i] {
+        for i in stride(from: 1, to: state.count, by: 2) {
+            if String(arr[i]) == "0" {
                 count += 1
             }
         }
@@ -137,7 +161,7 @@ class RLAgent2x2: ObservableObject {
         let movesArray = CubeMove.availableMoves2x2
         for _ in 0..<moves {
             let move = movesArray.randomElement()!
-            state = simulateCorner(state: state, move: move)
+            state = simulateDetailed(state: state, move: move)
         }
         return state
     }
@@ -162,33 +186,35 @@ class RLAgent2x2: ObservableObject {
         }
     }
     
-    /// Simulate the effect of a move on the 8–bit corner state.
-    /// The state string is 8 characters long.
-    private func simulateCorner(state: String, move: CubeMove) -> String {
-        guard state.count == 8 else { return state }
+    /// Simulate the effect of a move on the detailed corner state.
+    /// Our detailed state is a 16-character string: each corner is 2 digits (id and twist).
+    /// We update the state by applying the move's cornerPermutation and updating twist.
+    private func simulateDetailed(state: String, move: CubeMove) -> String {
+        guard state.count == 16 else { return state }
         let arr = Array(state)
-        var newArr = Array(repeating: Character("0"), count: 8)
-        var perm = Array(0..<8)
-        switch move {
-        case .U:
-            perm[0] = 1; perm[1] = 5; perm[5] = 4; perm[4] = 0
-        case .D:
-            perm[2] = 3; perm[3] = 7; perm[7] = 6; perm[6] = 2
-        case .L:
-            perm[0] = 2; perm[2] = 6; perm[6] = 4; perm[4] = 0
-        case .R:
-            perm[1] = 3; perm[3] = 7; perm[7] = 5; perm[5] = 1
-        case .F:
-            perm[0] = 1; perm[1] = 3; perm[3] = 2; perm[2] = 0
-        case .B:
-            perm[4] = 5; perm[5] = 7; perm[7] = 6; perm[6] = 4
-        default:
-            return simulateCorner(state: state, move: move.inverse)
+        // Parse state into 8 corners: each corner is a tuple (id, twist)
+        var corners: [(Int, Int)] = []
+        for i in stride(from: 0, to: 16, by: 2) {
+            let idStr = String(arr[i])
+            let twistStr = String(arr[i+1])
+            if let id = Int(idStr), let twist = Int(twistStr) {
+                corners.append((id, twist))
+            }
         }
+        // Get permutation mapping.
+        let perm = move.cornerPermutation  // array of 8 ints
+        let delta = move.cornerOrientationDelta  // array of 8 ints
+        var newCorners = Array(repeating: (0,0), count: 8)
         for i in 0..<8 {
-            newArr[i] = arr[perm[i]]
+            let from = perm[i]
+            let (id, twist) = corners[from]
+            newCorners[i] = (id, (twist + delta[from]) % 3)
         }
-        return String(newArr)
+        var newState = ""
+        for (id, twist) in newCorners {
+            newState += "\(id)\(twist)"
+        }
+        return newState
     }
     
     private func updateQ(state: String, action: CubeMove, reward: Double, nextState: String) {
@@ -201,7 +227,7 @@ class RLAgent2x2: ObservableObject {
             }
             let maxNext = Q[nextState]!.values.max() ?? 0.0
             let oldQ = Q[state]![action] ?? 0.001
-            Q[state]![action]! = oldQ + config.alpha * (reward + config.gamma * maxNext - oldQ)
+            Q[state]![action]! = oldQ + currentAlpha * (reward + config.gamma * maxNext - oldQ)
         }
     }
     
@@ -221,9 +247,18 @@ class RLAgent2x2: ObservableObject {
             }
             guard let bestMove = actions.max(by: { a, b in a.value < b.value })?.key else { break }
             solution.append(bestMove)
-            currentState = simulateCorner(state: currentState, move: bestMove)
+            currentState = simulateDetailed(state: currentState, move: bestMove)
             if isSolved(currentState) { break }
         }
         return solution
+    }
+    
+    func printQStatistics() {
+        qQueue.sync {
+            let stateCount = Q.keys.count
+            let allValues = Q.values.flatMap { $0.values }
+            let avgQ = allValues.reduce(0, +) / Double(allValues.count)
+            print("Q–table: \(stateCount) states, avg Q value: \(avgQ)")
+        }
     }
 }

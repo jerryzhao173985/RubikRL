@@ -44,6 +44,7 @@ struct ContentView: View {
                         print("Current corner state: \(currentState)")
                         let solution = rlAgent.getSolution(from: currentState, maxDepth: 50)
                         print("RL solution: \(solution.map { $0.rawValue })")
+                        rlAgent.printQStatistics()
                         cubeManager.animateSolution(moves: solution)
                     }) {
                         Text("Run")
@@ -54,6 +55,10 @@ struct ContentView: View {
                             .cornerRadius(12)
                     }
                 }
+            }
+            .onAppear {
+                // Optionally update debug labels after each move.
+                cubeManager.updateDebugLabels()
             }
             .padding()
             .background(Color.black)
