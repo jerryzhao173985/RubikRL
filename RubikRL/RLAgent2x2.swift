@@ -21,6 +21,12 @@ class RLAgent2x2: ObservableObject {
         self.epsilon = config.initialEpsilon
     }
     
+    // A simple helper that checks if the state equals the canonical solved state.
+    // (If you wish to allow global rotations as solved, you can compute all equivalent states.)
+    private func isSolved(_ state: String) -> Bool {
+        return state == solved
+    }
+    
     private func updateEpsilon(episode: Int) {
         let decayFactor = exp(-self.config.decayRate * Double(episode))
         epsilon = max(self.config.minEpsilon, self.config.initialEpsilon * decayFactor)
@@ -36,8 +42,9 @@ class RLAgent2x2: ObservableObject {
         averageReward = 0.0
         epsilon = config.initialEpsilon
         
-        // Use corner-based state as solved state.
-        let solvedState = environment.getCornerState()  // For example, solved state might be "00001111"
+        // Define solved state consistently:
+        // Here we set solved to the initial corner state.
+        let solvedState = environment.getCornerState()  // For example, "00001111"
         solved = solvedState
         
         DispatchQueue.global(qos: .userInitiated).async {
@@ -88,20 +95,41 @@ class RLAgent2x2: ObservableObject {
         var steps = 0
         var episodeReward: Double = 0
         
-        while state != solved && steps < config.maxSteps && !stopRequested {
+        while !isSolved(state) && steps < config.maxSteps && !stopRequested {
+            let currentPotential = Double(numCorrectCorners(state: state))
             let action = chooseActionForTraining(state: state)
             let nextState = simulateCorner(state: state, move: action)
-            let reward: Double = (nextState == solved) ? (100 - Double(steps + 1)) : -1.0
+            let nextPotential = Double(numCorrectCorners(state: nextState))
+            let r = -1.0
+            // Shaped reward: add potential difference.
+            let shapedReward = r + config.gamma * nextPotential - currentPotential
+            let reward: Double = isSolved(nextState) ? (shapedReward + (100 - Double(steps + 1))) : shapedReward
+            
             updateQ(state: state, action: action, reward: reward, nextState: nextState)
             episodeReward += reward
             state = nextState
             steps += 1
-            if state == solved { break }
+            if isSolved(state) { break }
         }
-        if state != solved {
+        if !isSolved(state) {
             return -Double(config.maxSteps)
         }
         return episodeReward
+    }
+    
+    private func numCorrectCorners(state: String) -> Int {
+        // In our simple representation, state is 8 characters.
+        // Compare each character to the corresponding character in 'solved'.
+        guard state.count == solved.count else { return 0 }
+        let sArr = Array(state)
+        let solArr = Array(solved)
+        var count = 0
+        for i in 0..<sArr.count {
+            if sArr[i] == solArr[i] {
+                count += 1
+            }
+        }
+        return count
     }
     
     private func randomState(from solvedState: String, moves: Int) -> String {
@@ -135,7 +163,7 @@ class RLAgent2x2: ObservableObject {
     }
     
     /// Simulate the effect of a move on the 8–bit corner state.
-    /// The state is represented as an 8-character string.
+    /// The state string is 8 characters long.
     private func simulateCorner(state: String, move: CubeMove) -> String {
         guard state.count == 8 else { return state }
         let arr = Array(state)
@@ -143,22 +171,16 @@ class RLAgent2x2: ObservableObject {
         var perm = Array(0..<8)
         switch move {
         case .U:
-            // Affects top layer corners: indices 0,1,4,5.
             perm[0] = 1; perm[1] = 5; perm[5] = 4; perm[4] = 0
         case .D:
-            // Affects bottom layer corners: indices 2,3,6,7.
             perm[2] = 3; perm[3] = 7; perm[7] = 6; perm[6] = 2
         case .L:
-            // Affects left face: indices 0,2,4,6.
             perm[0] = 2; perm[2] = 6; perm[6] = 4; perm[4] = 0
         case .R:
-            // Affects right face: indices 1,3,5,7.
             perm[1] = 3; perm[3] = 7; perm[7] = 5; perm[5] = 1
         case .F:
-            // Affects front face: indices 0,1,2,3.
             perm[0] = 1; perm[1] = 3; perm[3] = 2; perm[2] = 0
         case .B:
-            // Affects back face: indices 4,5,6,7.
             perm[4] = 5; perm[5] = 7; perm[7] = 6; perm[6] = 4
         default:
             return simulateCorner(state: state, move: move.inverse)
@@ -183,12 +205,12 @@ class RLAgent2x2: ObservableObject {
         }
     }
     
-    /// Inference: Use pure greedy (epsilon = 0)
+    /// Inference: Use pure greedy (epsilon = 0).
     func getSolution(from state: String, maxDepth: Int = 50) -> [CubeMove] {
         var solution: [CubeMove] = []
         var currentState = state
         for _ in 0..<maxDepth {
-            if currentState == solved { break }
+            if isSolved(currentState) { break }
             var actions: [CubeMove: Double] = [:]
             qQueue.sync {
                 actions = Q[currentState] ?? [:]
@@ -200,7 +222,7 @@ class RLAgent2x2: ObservableObject {
             guard let bestMove = actions.max(by: { a, b in a.value < b.value })?.key else { break }
             solution.append(bestMove)
             currentState = simulateCorner(state: currentState, move: bestMove)
-            if currentState == solved { break }
+            if isSolved(currentState) { break }
         }
         return solution
     }
