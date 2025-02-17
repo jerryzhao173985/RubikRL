@@ -1,50 +1,81 @@
 import SceneKit
 
 enum CubeMove: String, CaseIterable {
-    case U, D, L, R, F, B, UPrime, DPrime, LPrime, RPrime, FPrime, BPrime
-    
-    // We assume the RL agent will only use the non-prime moves for simplicity.
+    case U, UPrime, D, DPrime, L, LPrime, R, RPrime, F, FPrime, B, BPrime
+
+    // Only use these moves for RL (if desired)
     static var availableMoves2x2: [CubeMove] {
         return [.U, .D, .L, .R, .F, .B]
     }
     
-    // For corner simulation, we define permutation mappings on indices 0...7.
-    var cornerPermutation: [Int] {
+    // Computed property for the rotation axis.
+    var axis: SCNVector3 {
         switch self {
-        case .U:
-            // Affects corners 0,1,4,5. Clockwise: 0->1, 1->5, 5->4, 4->0.
-            return [1, 5, 2, 3, 0, 4, 6, 7]
-        case .D:
-            // Affects corners 2,3,6,7. Clockwise: 2->3, 3->7, 7->6, 6->2.
-            return [0, 1, 3, 7, 4, 5, 2, 6]
-        case .L:
-            // Affects corners 0,2,4,6. Clockwise: 0->2, 2->6, 6->4, 4->0.
-            return [2, 1, 6, 3, 0, 5, 4, 7]
-        case .R:
-            // Affects corners 1,3,5,7. Clockwise: 1->3, 3->7, 7->5, 5->1.
-            return [0, 3, 2, 7, 4, 1, 6, 5]
-        case .F:
-            // Affects corners 0,1,2,3. Clockwise: 0->1, 1->3, 3->2, 2->0.
-            return [1, 3, 0, 2, 4, 5, 6, 7]
-        case .B:
-            // Affects corners 4,5,6,7. Clockwise: 4->5, 5->7, 7->6, 6->4.
-            return [0, 1, 2, 3, 5, 7, 4, 6]
-        case .UPrime:
-            return CubeMove.U.inverse.cornerPermutation
-        case .DPrime:
-            return CubeMove.D.inverse.cornerPermutation
-        case .LPrime:
-            return CubeMove.L.inverse.cornerPermutation
-        case .RPrime:
-            return CubeMove.R.inverse.cornerPermutation
-        case .FPrime:
-            return CubeMove.F.inverse.cornerPermutation
-        case .BPrime:
-            return CubeMove.B.inverse.cornerPermutation
+        case .U, .UPrime, .D, .DPrime:
+            return SCNVector3(0, 1, 0)
+        case .L, .LPrime, .R, .RPrime:
+            return SCNVector3(1, 0, 0)
+        case .F, .FPrime, .B, .BPrime:
+            return SCNVector3(0, 0, 1)
         }
     }
     
-    // Define inverse as three quarter turn.
+    // Computed property for the rotation angle.
+    var angle: Double {
+        switch self {
+        case .U, .D, .L, .R, .F, .B:
+            return Double.pi / 2
+        case .UPrime, .DPrime, .LPrime, .RPrime, .FPrime, .BPrime:
+            return -Double.pi / 2
+        }
+    }
+    
+    // Computed property that indicates which face layer is affected.
+    var affectedLayer: (axis: String, value: Double) {
+        switch self {
+        case .U, .UPrime:
+            return ("y", 0.5)
+        case .D, .DPrime:
+            return ("y", -0.5)
+        case .L, .LPrime:
+            return ("x", -0.5)
+        case .R, .RPrime:
+            return ("x", 0.5)
+        case .F, .FPrime:
+            return ("z", 0.5)
+        case .B, .BPrime:
+            return ("z", -0.5)
+        }
+    }
+    
+    // Rotate a coordinate by the move.
+    func rotateCoordinate(_ coord: (x: Double, y: Double, z: Double)) -> (x: Double, y: Double, z: Double) {
+        switch self {
+        case .U:      return (x: coord.z, y: coord.y, z: -coord.x)
+        case .UPrime: return (x: -coord.z, y: coord.y, z: coord.x)
+        case .D:      return (x: -coord.z, y: coord.y, z: coord.x)
+        case .DPrime: return (x: coord.z, y: coord.y, z: -coord.x)
+        case .L:      return (x: coord.x, y: coord.z, z: -coord.y)
+        case .LPrime: return (x: coord.x, y: -coord.z, z: coord.y)
+        case .R:      return (x: coord.x, y: -coord.z, z: coord.y)
+        case .RPrime: return (x: coord.x, y: coord.z, z: -coord.y)
+        case .F:      return (x: coord.y, y: -coord.x, z: coord.z)
+        case .FPrime: return (x: -coord.y, y: coord.x, z: coord.z)
+        case .B:      return (x: -coord.y, y: coord.x, z: coord.z)
+        case .BPrime: return (x: coord.y, y: -coord.x, z: coord.z)
+        }
+    }
+    
+    // Computed property for the rotation as a quaternion.
+    var quaternion: SCNQuaternion {
+        let halfAngle = angle / 2
+        let sinHalf = sin(halfAngle)
+        let cosHalf = cos(halfAngle)
+        let a = axis
+        return SCNQuaternion(a.x * Float(sinHalf), a.y * Float(sinHalf), a.z * Float(sinHalf), Float(cosHalf))
+    }
+    
+    // Inverse move: map each move to its opposite.
     var inverse: CubeMove {
         switch self {
         case .U: return .UPrime

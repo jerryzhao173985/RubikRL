@@ -135,7 +135,7 @@ class RLAgent2x2: ObservableObject {
     }
     
     /// Simulate the effect of a move on the 8–bit corner state.
-    /// The state string is 8 characters long.
+    /// The state is represented as an 8-character string.
     private func simulateCorner(state: String, move: CubeMove) -> String {
         guard state.count == 8 else { return state }
         let arr = Array(state)
@@ -143,10 +143,10 @@ class RLAgent2x2: ObservableObject {
         var perm = Array(0..<8)
         switch move {
         case .U:
-            // Affects top face corners: indices 0,1,4,5.
+            // Affects top layer corners: indices 0,1,4,5.
             perm[0] = 1; perm[1] = 5; perm[5] = 4; perm[4] = 0
         case .D:
-            // Affects bottom face corners: indices 2,3,6,7.
+            // Affects bottom layer corners: indices 2,3,6,7.
             perm[2] = 3; perm[3] = 7; perm[7] = 6; perm[6] = 2
         case .L:
             // Affects left face: indices 0,2,4,6.
@@ -183,7 +183,7 @@ class RLAgent2x2: ObservableObject {
         }
     }
     
-    /// Inference: Use greedy (epsilon = 0)
+    /// Inference: Use pure greedy (epsilon = 0)
     func getSolution(from state: String, maxDepth: Int = 50) -> [CubeMove] {
         var solution: [CubeMove] = []
         var currentState = state

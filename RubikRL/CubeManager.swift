@@ -3,7 +3,7 @@ import SwiftUI
 
 class CubeManager: ObservableObject {
     let scene: SCNScene
-    let cubeContainer: SCNNode
+    let cubeContainer: SCNNode  // Container node for the cube.
     var cubies: [Cubie] = []
     let positions: [Double] = [-0.5, 0.5]
     var moveHistory: [CubeMove] = []
@@ -47,7 +47,7 @@ class CubeManager: ObservableObject {
             for y in positions {
                 for z in positions {
                     let box = SCNBox(width: 1, height: 1, length: 1, chamferRadius: 0.01)
-                    // Use two colors: red for front, back, top; blue for right, left, bottom.
+                    // Two colors: red for front, back, top; blue for right, left, bottom.
                     let redMat = SCNMaterial(); redMat.diffuse.contents = UIColor.red
                     let blueMat = SCNMaterial(); blueMat.diffuse.contents = UIColor.blue
                     box.materials = [redMat, blueMat, redMat, blueMat, redMat, blueMat]
@@ -114,7 +114,7 @@ class CubeManager: ObservableObject {
             completion?()
         }
     }
-    
+
     private func multiplyQuaternion(q1: SCNQuaternion, q2: SCNQuaternion) -> SCNQuaternion {
         let w1 = q1.w, x1 = q1.x, y1 = q1.y, z1 = q1.z
         let w2 = q2.w, x2 = q2.x, y2 = q2.y, z2 = q2.z
@@ -142,9 +142,21 @@ class CubeManager: ObservableObject {
         }
         performNext()
     }
-    
-    /// Returns an 8-character string representing the simplified corner state.
-    /// We order the cubies by their id (assigned during buildCube) and for each cubie output "0" if its y is > 0 (top) and "1" if y < 0 (bottom).
+
+    // Fallback function: animate the sequence of moves.
+    func animateSolution(moves: [CubeMove]) {
+        guard !moves.isEmpty else { return }
+        let first = moves.first!
+        performMove(first, record: false) {
+            let remaining = Array(moves.dropFirst())
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.animateSolution(moves: remaining)
+            }
+        }
+    }
+
+    /// In our reduced corner representation, we simply represent the state by the y-coordinate.
+    /// For example, if a cubie’s y > 0, output "0" (top) else "1" (bottom).
     func getCornerState() -> String {
         let sortedCubies = cubies.sorted { $0.id < $1.id }
         let state = sortedCubies.map { cubie -> String in

@@ -8,5 +8,5 @@ struct RLConfig {
     var decayRate: Double = 0.0001   // Epsilon decay per episode.
     var maxSteps: Int = 50           // Max moves per episode.
     var windowSize: Int = 50         // Episodes for averaging reward.
-    var targetReward: Double = 90.0  // Convergence target.
+    var targetReward: Double = 1000.0  // Convergence target.
 }
