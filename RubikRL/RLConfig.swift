@@ -14,11 +14,11 @@ struct RLConfig {
     
     var maxSteps: Int {
         switch size {
-        case 2: return 2*1
-        case 3: return 3*2*1
-        case 4: return 4*3*2*1
-        case 5: return 5*4*3*2*1
-        default: return 10
+        case 2: return 2+1
+        case 3: return 3+2+1
+        case 4: return 4+3+2+1
+        case 5: return 5+4+3+2+1
+        default: return 25
         }
     }
     var targetReward: Double {
@@ -27,7 +27,7 @@ struct RLConfig {
         case 3: return 95
         case 4: return 91
         case 5: return 86
-        default: return 98
+        default: return 80
         }
     }
 }

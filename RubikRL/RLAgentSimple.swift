@@ -77,7 +77,7 @@ class RLAgentSimple: ObservableObject {
                     self.updateEpsilon(episode: episodeCount)
                     self.updateAlpha(episode: episodeCount)
                     let initState = String(Int.random(in: 0..<totalStates))
-                    let reward = self.runOneEpisode(from: initState)
+                    let reward = self.runOneEpisodeScrambleInit()
                     batchRewards.append(reward)
                     
                     DispatchQueue.main.async {
@@ -105,6 +105,8 @@ class RLAgentSimple: ObservableObject {
         }
     }
     
+    /// Previous train every episode starting from any random initial state.
+    /// In startTraining, replacing: let reward = self.runOneEpisode(from: initState)
     private func runOneEpisode(from initState: String) -> Double {
         var state = initState
         var steps = 0
@@ -124,6 +126,39 @@ class RLAgentSimple: ObservableObject {
         }
         return episodeReward
     }
+    
+    /// Scrambled Initial State for Training:
+    /// Instead of starting each episode with a completely random state, we now generate an initial state by “scrambling” from the solved state (i.e. the goal state) by applying a random number (between 1 and 50) of random actions.
+    /// This guarantees that the initial state is reachable from the solved state and that a solution exists
+    private func runOneEpisodeScrambleInit() -> Double {
+        // Instead of using a randomly chosen state, we start from the solved state
+        // and scramble it with a random number of random actions (between 1 and 50).
+        let scrambleSteps = Int.random(in: 1...50)
+        var state = solved  // Start at solved (goal) state.
+        let actions = allCubeActions(forCubeSize: config.size)
+        for _ in 0..<scrambleSteps {
+            let randomAction = actions.randomElement()!
+            state = simulateState(state: state, action: randomAction)
+        }
+        // Now use the scrambled state as the initial state for this episode.
+        var steps = 0
+        var episodeReward = 0.0
+        while state != solved && steps < config.maxSteps && !stopRequested {
+            let action = chooseActionForTraining(state: state)
+            let nextState = simulateState(state: state, action: action)
+            let reward: Double = nextState == solved ? (100 - Double(steps + 1)) : -1.0
+            updateQ(state: state, action: action, reward: reward, nextState: nextState)
+            episodeReward += reward
+            state = nextState
+            steps += 1
+            if state == solved { break }
+        }
+        if state != solved {
+            return -Double(config.maxSteps)
+        }
+        return episodeReward
+    }
+    
     
     private func chooseActionForTraining(state: String) -> CubeAction {
         qQueue.sync {

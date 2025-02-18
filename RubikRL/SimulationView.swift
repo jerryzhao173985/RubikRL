@@ -29,7 +29,8 @@ struct SimulationView: View {
                         .foregroundColor(.white)
                     HStack(spacing: 30) {
                         Button(action: {
-                            cubeManager.randomizeCube()
+//                            cubeManager.randomizeCube()
+                            cubeManager.scrambleCube(steps: 20)
                         }) {
                             Text("Random")
                                 .padding()

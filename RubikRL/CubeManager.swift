@@ -147,9 +147,9 @@ class CubeManager: ObservableObject {
     }
     
     /// Perform an action (a slice rotation) that updates the RL state.
-    func performAction(_ action: CubeAction, record: Bool = true, completion: (() -> Void)? = nil) {
-        let currentState = getBlueCornerState()
-        guard let index = Int(currentState) else { return }
+    func performAction(_ action: CubeAction, currentState: String? = nil, record: Bool = true, completion: (() -> Void)? = nil) {
+        let state = currentState ?? getBlueCornerState()
+        guard let index = Int(state) else { return }
         let X = sizeX, Y = sizeY, Z = sizeZ
         let i = index % X
         let j = (index / X) % Y
@@ -162,10 +162,29 @@ class CubeManager: ObservableObject {
         completion?()
     }
     
+    /// Previous "Randomize" to any initial state possible with random index
     func randomizeCube() {
         let total = sizeX * sizeY * sizeZ
         let randomIndex = Int.random(in: 0..<total)
         updateColors(for: "\(randomIndex)")
+    }
+    
+    /// “Random” Button Scramble:
+    /// Instead of directly setting a random blue index, the “Random” button now calls a new function that applies (by default) 20 random actions to scramble the cube.
+    /// This makes the test initial state more realistic.
+    func scrambleCube(steps: Int = 20) {
+        // Check if the current blue state is "?"
+        if getBlueCornerState() == "?" {
+            let goalState = settings.goal.map { "\($0)" } ?? "1"
+            print("Current blue state is '?'. Resetting to goal state \(goalState)")
+            updateColors(for: goalState)
+        }
+        // Now perform a scramble: apply a sequence of random actions.
+        let actions = allCubeActions(forCubeSize: sizeX) // Use sizeX (assuming canonical ordering)
+        for _ in 0..<steps {
+            let randomAction = actions.randomElement()!
+            performAction(randomAction, record: false, completion: nil)
+        }
     }
     
     func animateSolution(moves: [CubeAction]) {
